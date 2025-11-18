@@ -1,0 +1,5 @@
+{
+  "name": "Project Tracker",
+  "description": "A web application to view projects and their associated tasks from a Microsoft Dataverse instance. It provides a clean, two-panel interface for easy navigation and tracking.",
+  "requestFramePermissions": []
+}
