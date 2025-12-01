@@ -1,11 +1,10 @@
 
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import type { Task, ProductMember } from '../types';
 import ErrorMessage from './ErrorMessage';
 import LoadingSpinner from './LoadingSpinner';
-import ReportRenderer from './ReportRenderer';
 import Tabs from './Tabs';
 
 interface WeeklyReportModalProps {
@@ -19,6 +18,35 @@ const formElementClasses = "w-full bg-slate-800 border border-slate-600 rounded-
 
 const DEPARTMENTS = ["R&D", "Sale", "Sourcing", "Logistic", "HR", "Accounting", "Finance"];
 
+// Helper component for Editable HTML Content
+const EditableReportContent: React.FC<{ initialContent: string; onChange: (html: string) => void }> = ({ initialContent, onChange }) => {
+  const divRef = useRef<HTMLDivElement>(null);
+  
+  // We use a ref to track if content has been initialized. 
+  // This component is intended to be keyed by generationCount from the parent, 
+  // so it remounts on new generation, resetting this effect.
+  useEffect(() => {
+    if (divRef.current) {
+        divRef.current.innerHTML = initialContent;
+    }
+  }, []); // Only run once on mount
+
+  const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
+      onChange(e.currentTarget.innerHTML);
+  };
+
+  return (
+      <div
+          ref={divRef}
+          className="report-content w-full h-full p-4 bg-slate-900 text-slate-300 focus:outline-none focus:ring-1 focus:ring-cyan-500 overflow-y-auto"
+          contentEditable
+          suppressContentEditableWarning
+          onInput={handleInput}
+          onBlur={handleInput}
+      />
+  );
+};
+
 const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ onClose, productMembers, allTasks, accessToken }) => {
   const [assigneeId, setAssigneeId] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -29,7 +57,9 @@ const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ onClose, productM
   const [error, setError] = useState<string | null>(null);
   const [reportContent, setReportContent] = useState<string>('');
   const [copyButtonText, setCopyButtonText] = useState('Copy All');
-  const [activeTab, setActiveTab] = useState<'Preview' | 'Edit'>('Preview');
+  
+  const [viewMode, setViewMode] = useState<'Visual' | 'Source'>('Visual');
+  const [generationCount, setGenerationCount] = useState(0);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -73,7 +103,8 @@ const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ onClose, productM
         const end = new Date(endDate);
         end.setHours(23, 59, 59, 999);
 
-        const filteredTasks = allTasks.filter(task => {
+        // 1. Filter Completed Tasks (within date range)
+        const completedTasks = allTasks.filter(task => {
             if (task.assigneeId !== assigneeId || task.status !== 'Completed') {
                 return false;
             }
@@ -84,65 +115,96 @@ const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ onClose, productM
             return taskEnd >= start && taskEnd <= end;
         });
 
-        // Sort tasks chronologically by end date
-        const sortedTasks = filteredTasks.sort((a, b) => {
+        // 2. Filter Upcoming/Ongoing Tasks (for "Plan for next week")
+        // Logic: Tasks assigned to user that are NOT Completed, Cancelled, or Unknown.
+        const planningTasks = allTasks.filter(task => {
+            return (
+                task.assigneeId === assigneeId && 
+                ['In Progress', 'To Do', 'Review', 'Pending'].includes(task.status)
+            );
+        });
+
+        // Sort tasks chronologically
+        const sortedCompletedTasks = completedTasks.sort((a, b) => {
             const dateA = a.endDateRaw ? new Date(a.endDateRaw).getTime() : 0;
             const dateB = b.endDateRaw ? new Date(b.endDateRaw).getTime() : 0;
             return dateA - dateB;
         });
 
-        if (sortedTasks.length === 0) {
-            setReportContent("<h1>Báo Cáo Công Việc Đã Hoàn Thành</h1><div class='report-meta'><p>No completed tasks found for the selected user and period.</p></div>");
+        if (sortedCompletedTasks.length === 0 && planningTasks.length === 0) {
+            setReportContent("<h1>BÁO CÁO CÔNG VIỆC TUẦN</h1><div class='report-meta'><p>Không tìm thấy dữ liệu công việc (hoàn thành hoặc đang thực hiện) cho nhân sự này trong khoảng thời gian đã chọn.</p></div>");
             setIsLoading(false);
+            setGenerationCount(prev => prev + 1);
             return;
         }
 
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-        const formattedTasks = sortedTasks.map(t => ({
+        const formattedCompleted = sortedCompletedTasks.map(t => ({
             QuyTrinh: t.project,
             CongViec: t.name,
-            MoTa: t.description.replace(/<[^>]*>/g, ' '), // Strip HTML tags for cleaner processing
+            MoTa: t.description.replace(/<[^>]*>/g, ' '), // Strip HTML tags
+        }));
+
+        const formattedPlanning = planningTasks.map(t => ({
+            QuyTrinh: t.project,
+            CongViec: t.name,
+            TrangThai: t.status,
+            HanChot: t.dueDate
         }));
         
         const reportTime = `${formatDate(startDate)} – ${formatDate(endDate)}`;
         const assigneeName = selectedAssignee.name?.split('_')[0] || selectedAssignee.name || 'N/A';
 
         const prompt = `
-            Bạn là một trợ lý quản lý dự án chuyên nghiệp. Dựa vào danh sách các công việc ĐÃ HOÀN THÀNH dưới dạng JSON sau đây, hãy tạo một "BÁO CÁO CÔNG VIỆC ĐÃ HOÀN THÀNH" bằng tiếng Việt. Trả về kết quả dưới dạng một chuỗi **HTML thuần túy**.
+            Bạn là một trợ lý quản lý dự án chuyên nghiệp. Hãy tạo một "BÁO CÁO CÔNG VIỆC TUẦN" bằng tiếng Việt dựa trên dữ liệu JSON dưới đây.
 
-            **Dữ liệu công việc (JSON) - ĐÃ ĐƯỢC SẮP XẾP THEO THỨ TỰ THỜI GIAN HOÀN THÀNH:**
-            ${JSON.stringify(formattedTasks)}
+            **Dữ liệu đầu vào:**
+            1. Danh sách công việc ĐÃ HOÀN THÀNH trong tuần:
+            ${JSON.stringify(formattedCompleted)}
 
-            **Thông tin báo cáo:**
+            2. Danh sách công việc ĐANG THỰC HIỆN / KẾ HOẠCH (cho tuần tới):
+            ${JSON.stringify(formattedPlanning)}
+
+            **Thông tin chung:**
             - Người thực hiện: ${assigneeName}
-            - Thời gian: ${reportTime}
+            - Thời gian báo cáo: ${reportTime}
             - Phòng ban: ${department}
 
-            **Yêu cầu định dạng đầu ra (HTML) - Theo đúng mẫu:**
-            - Toàn bộ kết quả phải là một chuỗi HTML. **KHÔNG** bao gồm \`\`\`html, \`<html>\`, \`<head>\` hoặc \`<body>\`. Chỉ trả về nội dung sẽ nằm bên trong thẻ body.
-            - KHÔNG SỬ DỤNG MARKDOWN.
+            **YÊU CẦU ĐỊNH DẠNG (HTML thuần túy, KHÔNG Markdown, KHÔNG thẻ <html>/<body>):**
+            
+            Bắt đầu báo cáo với:
+            \`<h1>BÁO CÁO CÔNG VIỆC TUẦN</h1>\`
+            \`<div class="report-meta"><p><strong>Người thực hiện:</strong> ${assigneeName}</p><p><strong>Thời gian:</strong> ${reportTime}</p><p><strong>Phòng ban:</strong> ${department}</p></div>\`
 
-            - **Tiêu đề chính:** Bắt đầu bằng thẻ \`<h1>BÁO CÁO CÔNG VIỆC TUẦN</h1>\`.
-            - **Thông tin báo cáo (Meta):**
-                - Gói gọn thông tin "Người thực hiện", "Thời gian", và "Phòng ban" trong một thẻ \`<div>\` với class là \`"report-meta"\`.
-                - Bên trong div đó, mỗi thông tin là một thẻ \`<p>\` với nhãn được bọc trong thẻ \`<strong>\`.
-                - Ví dụ: \`<p><strong>Người thực hiện:</strong> ${assigneeName}</p>\`
+            Sau đó, hãy tạo chính xác 3 phần sau đây:
 
-            - **Cấu trúc nội dung:**
-                1.  Tiêu đề "1. Tổng kết các công việc đã hoàn thành" dùng thẻ \`<h2>\`. Dưới đó là một danh sách \`<ul>\` với các \`<li>\` **tổng hợp cực ngắn gọn, tập trung các ý chính** các kết quả chính đã đạt được từ các công việc.
-                2.  Tiêu đề "2. Phân tích chi tiết" dùng thẻ \`<h2>\`. Dưới đó là một bảng \`<table>\`.
+            **Phần 1: Tổng kết các công việc đã hoàn thành**
+            - Sử dụng thẻ \`<h2>1. Tổng kết các công việc đã hoàn thành</h2>\`.
+            - Dưới đó, viết một danh sách \`<ul>\` tóm tắt ngắn gọn những kết quả chính đạt được từ danh sách công việc đã hoàn thành. Viết văn phong tích cực.
 
-            - **Yêu cầu cho bảng HTML chi tiết:**
-                - Tiêu đề các cột trong \`<thead>\`: "Quy trình", "Công việc hoàn thành", "Khó khăn", "Kế hoạch tiếp theo".
-                - **GOM NHÓM DỮ LIỆU THEO "Quy trình".**
-                - Đối với mỗi "Quy trình" duy nhất trong dữ liệu:
-                    - Tạo **MỘT HÀNG \`<tr>\` duy nhất**.
-                    - Ô \`<td>\` cho "Quy trình" chứa tên quy trình.
-                    - Ô \`<td>\` cho "Công việc hoàn thành" **phải chứa một danh sách \`<ul>\` lồng nhau**. Mỗi \`<li>\` trong danh sách này là một công việc ("CongViec") thuộc về quy trình đó. **QUAN TRỌNG: Giữ nguyên thứ tự các công việc** như đã cung cấp trong JSON đầu vào.
-                    - Suy luận và điền nội dung **ngắn gọn, tổng hợp, chuyên nghiệp** cho cột "Khó khăn" và "Kế hoạch tiếp theo" dựa trên mô tả công việc.
-                      - **Đối với cột "Khó khăn":** Mô tả ngắn gọn các khó khăn trong quá trình implement, tập trung vào các vấn đề kỹ thuật, tích hợp dữ liệu, tối ưu hiệu suất. Nếu không có, ghi "Không có".
-                      - **Đối với cột "Kế hoạch tiếp theo":** Đề xuất các bước tiếp theo một cách hợp lý. Nếu công việc đã xong và không có bước tiếp, ghi "Hoàn tất".
+            **Phần 2: Chi tiết**
+            - Sử dụng thẻ \`<h2>2. Chi tiết</h2>\`.
+            - Tạo một bảng \`<table>\` có border.
+            - Các cột bảng (\`<thead>\`): "Quy trình / Dự án", "Công việc hoàn thành", "Khó khăn", "Kế hoạch tiếp theo".
+            
+            **QUY TẮC TRÌNH BÀY BẢNG:**
+            1. **Gom nhóm theo Dự Án:** Mỗi Dự án / Quy trình chỉ hiển thị trên **một hàng (row)** duy nhất trong bảng.
+            2. **Cột "Công việc hoàn thành":** Liệt kê TẤT CẢ tên các công việc (Task Name) thuộc dự án đó vào trong cùng một ô. 
+               - Bắt buộc sử dụng thẻ danh sách \`<ul>\` với các mục \`<li>\` cho từng công việc để tạo danh sách gạch đầu dòng.
+            3. **Cột "Khó khăn":** Dựa trên mô tả công việc, hãy suy luận và tóm tắt các khó khăn/vướng mắc chung của dự án.
+               - Trình bày dạng gạch đầu dòng (\`<ul><li>...</li></ul>\`) nếu có nhiều ý.
+               - Mô tả ngắn gọn, không quá chi tiết.
+               - Nếu không có khó khăn, ghi "Không có".
+            4. **Cột "Kế hoạch tiếp theo":** Đưa ra kế hoạch tiếp theo chung cho dự án đó.
+               - Trình bày dạng gạch đầu dòng (\`<ul><li>...</li></ul>\`) nếu có nhiều ý.
+
+            **Phần 3: Kế hoạch tuần tới**
+            - Sử dụng thẻ \`<h2>3. Kế hoạch tuần tới</h2>\`.
+            - Dựa vào dữ liệu "Danh sách công việc ĐANG THỰC HIỆN / KẾ HOẠCH", hãy viết một đoạn văn (hoặc 1-2 câu) mô tả chung, tổng quát về trọng tâm công việc tuần tới.
+            - **KHÔNG** liệt kê chi tiết từng đầu việc (không dùng danh sách ul/li cho phần này). Chỉ mô tả định hướng chung.
+
+            **Lưu ý:** Chỉ trả về mã HTML để render bên trong thẻ body.
         `;
 
         const response = await ai.models.generateContent({
@@ -153,8 +215,10 @@ const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ onClose, productM
         let content = response.text;
         // Clean up potential markdown code fences that the AI might add
         content = content.replace(/^```html\s*/, '').replace(/```\s*$/, '');
+        
         setReportContent(content.trim());
-        setActiveTab('Preview');
+        setViewMode('Visual');
+        setGenerationCount(prev => prev + 1); // Force editor to reload with new content
 
     } catch (err) {
         setError(err instanceof Error ? err.message : 'An error occurred while generating the report.');
@@ -288,30 +352,34 @@ const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ onClose, productM
                 ) : reportContent ? (
                     <>
                         <div className="flex-shrink-0 flex items-center justify-between border-b border-slate-700 pb-2 mb-2">
-                             <Tabs tabs={['Preview', 'Edit']} activeTab={activeTab} onTabClick={(tab) => setActiveTab(tab as 'Preview' | 'Edit')} />
+                             <Tabs tabs={['Visual', 'Source']} activeTab={viewMode} onTabClick={(tab) => setViewMode(tab as 'Visual' | 'Source')} />
                             <button onClick={handleCopy} className="px-3 py-1 text-sm rounded-md bg-slate-600 hover:bg-slate-500 text-white transition-colors flex items-center gap-2">
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path d="M7 5a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2h-6a2 2 0 01-2-2V5z" /><path d="M4 3a2 2 0 00-2 2v8a2 2 0 002 2h6a2 2 0 002-2V5a2 2 0 00-2-2H4z" /></svg>
                                 {copyButtonText}
                             </button>
                         </div>
-                        <div className="flex-1 min-h-0 overflow-y-auto">
-                           {activeTab === 'Preview' ? (
-                                <div className="p-2">
-                                    <ReportRenderer content={reportContent} />
+                        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                           {viewMode === 'Visual' ? (
+                                <div className="flex-1 overflow-y-auto border border-slate-700 rounded-md bg-slate-900">
+                                    <EditableReportContent 
+                                        key={generationCount} // Force remount on new generation to reset content
+                                        initialContent={reportContent} 
+                                        onChange={setReportContent} 
+                                    />
                                 </div>
                            ) : (
                                 <textarea
                                     value={reportContent}
                                     onChange={(e) => setReportContent(e.target.value)}
-                                    className="w-full h-full p-2 bg-slate-900 text-slate-300 border border-slate-700 rounded-md font-mono text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                                    aria-label="Edit report content"
+                                    className="w-full h-full p-2 bg-slate-900 text-slate-300 border border-slate-700 rounded-md font-mono text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 resize-none"
+                                    aria-label="Edit report source code"
                                 />
                            )}
                         </div>
                     </>
                 ) : (
                     <div className="flex items-center justify-center h-full text-slate-500">
-                        <p>Please select settings and generate a report to see the preview here.</p>
+                        <p>Please select settings and generate a report to see the result here.</p>
                     </div>
                 )}
             </div>

@@ -188,9 +188,9 @@ export async function getProjects(token: string, departmentValue?: number): Prom
     const GENERAL_DEPARTMENT_VALUE = 191920006;
     
     if (departmentValue !== undefined) {
-        // For logged-in users, filter by department and show Active, Maintenance, and Backlog projects.
-        // Excludes Completed (100000001) and Planned (191920000).
-        filter = `statecode eq 0 and crdfd_processstatus ne 100000001 and crdfd_processstatus ne 191920000 and crdfd_department_ eq ${departmentValue}`;
+        // For logged-in users, filter by department and show Active, Maintenance, Backlog and Completed projects.
+        // Excludes Planned (191920000) only.
+        filter = `statecode eq 0 and crdfd_processstatus ne 191920000 and crdfd_department_ eq ${departmentValue}`;
     } else {
         // For guests (not logged in), only show Active (191920001) and Maintenance (191920003) projects from the General department.
         filter = `statecode eq 0 and (crdfd_processstatus eq 191920001 or crdfd_processstatus eq 191920003) and crdfd_department_ eq ${GENERAL_DEPARTMENT_VALUE}`;

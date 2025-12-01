@@ -1,5 +1,4 @@
 
-
 import React, { useMemo } from 'react';
 import type { Project, Task } from '../types';
 import Card from './Card';
@@ -42,8 +41,14 @@ interface ProjectCardProps {
 const ProjectCard: React.FC<ProjectCardProps> = ({ project, tasks, onSelectProject }) => {
   const progressPercentage = useMemo(() => {
     if (!tasks || tasks.length === 0) return 0;
-    const completedTasks = tasks.filter(t => t.status === 'Completed').length;
-    return (completedTasks / tasks.length) * 100;
+    
+    // Filter out Cancelled tasks from the calculation
+    const validTasks = tasks.filter(t => t.status !== 'Cancelled');
+    
+    if (validTasks.length === 0) return 0;
+    
+    const completedTasks = validTasks.filter(t => t.status === 'Completed').length;
+    return (completedTasks / validTasks.length) * 100;
   }, [tasks]);
 
 

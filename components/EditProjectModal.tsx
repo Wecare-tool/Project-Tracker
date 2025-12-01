@@ -1,5 +1,4 @@
 
-
 import React, { useState } from 'react';
 import ErrorMessage from './ErrorMessage';
 import type { Project, UpdateProjectPayload, TaskPriority, ProjectStatus } from '../types';
@@ -157,6 +156,7 @@ const EditProjectModal: React.FC<EditProjectModalProps> = ({ project, onClose, o
                         <option>Active</option>
                         <option>Backlog</option>
                         <option>Maintenance</option>
+                        <option>Completed / Closed</option>
                     </select>
                 </FormField>
             </FormRow>

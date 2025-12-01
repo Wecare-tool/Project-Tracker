@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import type { Project, Task, NewTaskPayload, UpdateTaskPayload, ProductMember, UpdateProjectPayload, TechResource } from '../types';
 import { getTasksForProject, createTask, updateTask, updateProject } from '../services/dataverseService';
@@ -88,9 +87,13 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, accessToken, pro
   }, [fetchTasks]);
   
   const progressPercentage = useMemo(() => {
-    if (tasks.length === 0) return 0;
-    const completedTasks = tasks.filter(t => t.status === 'Completed').length;
-    return (completedTasks / tasks.length) * 100;
+    // Filter out Cancelled tasks from the calculation
+    const validTasks = tasks.filter(t => t.status !== 'Cancelled');
+    
+    if (validTasks.length === 0) return 0;
+    
+    const completedTasks = validTasks.filter(t => t.status === 'Completed').length;
+    return (completedTasks / validTasks.length) * 100;
   }, [tasks]);
 
   const { currentStep, nextStep, blockers } = useMemo(() => {

@@ -1,5 +1,4 @@
 
-
 import React, { useState } from 'react';
 import ErrorMessage from './ErrorMessage';
 import type { NewProjectPayload, WeCareSystem } from '../types';
@@ -197,6 +196,7 @@ const AddProjectModal: React.FC<AddProjectModalProps> = ({ onClose, onSave, weCa
                             <option>Active</option>
                             <option>Backlog</option>
                             <option>Maintenance</option>
+                            <option>Completed / Closed</option>
                         </select>
                     </FormField>
                 </FormRow>
