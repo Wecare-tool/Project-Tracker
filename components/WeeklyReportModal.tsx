@@ -12,6 +12,7 @@ interface WeeklyReportModalProps {
   productMembers: ProductMember[];
   allTasks: Task[];
   accessToken: string;
+  loggedInUser?: { id: string; name: string } | null;
 }
 
 const formElementClasses = "w-full bg-slate-800 border border-slate-600 rounded-md p-2 text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500 transition-colors";
@@ -47,7 +48,7 @@ const EditableReportContent: React.FC<{ initialContent: string; onChange: (html:
   );
 };
 
-const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ onClose, productMembers, allTasks, accessToken }) => {
+const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ onClose, productMembers, allTasks, accessToken, loggedInUser }) => {
   const [assigneeId, setAssigneeId] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -60,6 +61,22 @@ const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ onClose, productM
   
   const [viewMode, setViewMode] = useState<'Visual' | 'Source'>('Visual');
   const [generationCount, setGenerationCount] = useState(0);
+
+  // Auto-select assignee based on logged-in user name
+  useEffect(() => {
+    if (loggedInUser && !assigneeId) {
+        // Find product member with same name.
+        // Dataverse name might contain department (e.g., "Name_Department")
+        // Logged-in name is usually just "Name".
+        const match = productMembers.find(pm => 
+            pm.name.toLowerCase().includes(loggedInUser.name.toLowerCase()) ||
+            loggedInUser.name.toLowerCase().includes(pm.name.toLowerCase())
+        );
+        if (match) {
+            setAssigneeId(match.id);
+        }
+    }
+  }, [loggedInUser, productMembers, assigneeId]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -101,9 +118,17 @@ const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ onClose, productM
         const normalizeId = (id: string | undefined | null) => id ? id.toLowerCase().trim() : '';
         const targetAssigneeId = normalizeId(assigneeId);
 
+        // Filter Logic: Match either by ID OR by Name string.
+        // This ensures robust filtering even if IDs are mismatched between environment and mock data.
+        const checkAssigneeMatch = (task: Task) => {
+            const idMatch = normalizeId(task.assigneeId) === targetAssigneeId;
+            const nameMatch = task.assignee === selectedAssignee.name;
+            return idMatch || nameMatch;
+        };
+
         // 1. Filter Completed Tasks (within date range)
         const completedTasks = allTasks.filter(task => {
-            if (normalizeId(task.assigneeId) !== targetAssigneeId) {
+            if (!checkAssigneeMatch(task)) {
                 return false;
             }
             if (task.status !== 'Completed') {
@@ -133,7 +158,7 @@ const WeeklyReportModal: React.FC<WeeklyReportModalProps> = ({ onClose, productM
         // Logic: Tasks assigned to user that are NOT Completed, Cancelled, or Unknown.
         const planningTasks = allTasks.filter(task => {
             return (
-                normalizeId(task.assigneeId) === targetAssigneeId && 
+                checkAssigneeMatch(task) && 
                 ['In Progress', 'To Do', 'Review', 'Pending'].includes(task.status)
             );
         });

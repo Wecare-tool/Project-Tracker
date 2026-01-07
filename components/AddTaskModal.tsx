@@ -1,5 +1,3 @@
-
-
 import React, { useState } from 'react';
 import ErrorMessage from './ErrorMessage';
 import type { NewTaskPayload, ProductMember } from '../types';
@@ -101,7 +99,6 @@ const AddTaskModal: React.FC<AddTaskModalProps> = ({ onClose, onSave, productMem
   return (
     <div 
         className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
-        onClick={onClose}
         aria-modal="true"
         role="dialog"
     >
@@ -110,8 +107,18 @@ const AddTaskModal: React.FC<AddTaskModalProps> = ({ onClose, onSave, productMem
         onClick={(e) => e.stopPropagation()}
       >
         <form onSubmit={handleSubmit}>
-            <header className="p-4 border-b border-slate-700">
+            <header className="p-4 border-b border-slate-700 flex items-center justify-between">
                 <h2 className="text-xl font-bold text-white">Add New Task</h2>
+                <button 
+                    type="button"
+                    onClick={onClose} 
+                    className="text-slate-400 hover:text-white transition-colors p-1 rounded-full"
+                    aria-label="Close modal"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
             </header>
             <main className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
                 <div>

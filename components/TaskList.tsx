@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import type { Task, TaskStatus, UpdateTaskPayload, ProductMember, TechResource } from '../types';
 import Tabs from './Tabs';
@@ -12,12 +10,13 @@ interface TaskListProps {
   accessToken: string;
   productMembers: ProductMember[];
   isAuthenticated: boolean;
+  loggedInUserId: string | null;
   onResourceClick: (resource: TechResource) => void;
 }
 
 type FilterStatus = 'All' | TaskStatus;
 
-const TaskList: React.FC<TaskListProps> = ({ tasks, onUpdateTask, accessToken, productMembers, isAuthenticated, onResourceClick }) => {
+const TaskList: React.FC<TaskListProps> = ({ tasks, onUpdateTask, accessToken, productMembers, isAuthenticated, loggedInUserId, onResourceClick }) => {
   const [activeTab, setActiveTab] = useState<FilterStatus>('All');
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [displayTasks, setDisplayTasks] = useState<Task[]>([]);
@@ -140,7 +139,7 @@ const TaskList: React.FC<TaskListProps> = ({ tasks, onUpdateTask, accessToken, p
                     return (
                         <li 
                             key={task.id} 
-                            className={`py-4 flex items-center space-x-4 group transition-colors ${isAuthenticated ? 'cursor-pointer' : 'cursor-default'}`}
+                            className={`py-4 flex items-center space-x-4 group transition-colors cursor-pointer`}
                             draggable={isAuthenticated}
                             onDragStart={(e) => isAuthenticated && handleDragStart(e, index)}
                             onDragEnter={(e) => isAuthenticated && handleDragEnter(e, index)}
@@ -148,10 +147,10 @@ const TaskList: React.FC<TaskListProps> = ({ tasks, onUpdateTask, accessToken, p
                             onDrop={handleDrop}
                             onDragOver={(e) => isAuthenticated && e.preventDefault()}
                             onDragEnd={handleDragEnd}
-                            onClick={() => isAuthenticated && setSelectedTask(task)}
-                            role={isAuthenticated ? "button" : "listitem"}
-                            tabIndex={isAuthenticated ? 0 : -1}
-                            onKeyDown={(e) => { if(isAuthenticated && e.key === 'Enter') setSelectedTask(task) }}
+                            onClick={() => setSelectedTask(task)}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => { if(e.key === 'Enter') setSelectedTask(task) }}
                         >
                             {isAuthenticated && (
                                 <Checkbox 
@@ -163,8 +162,8 @@ const TaskList: React.FC<TaskListProps> = ({ tasks, onUpdateTask, accessToken, p
                                     aria-label={`Mark task ${task.name} as ${isCompleted ? 'incomplete' : 'complete'}`}
                                 />
                             )}
-                            <div className={`flex-1 min-w-0 ${!isAuthenticated ? 'ml-8' : ''}`}>
-                                <span className={`text-sm font-medium text-slate-200 truncate ${isAuthenticated ? 'group-hover:text-cyan-400' : ''} transition-colors ${isCompleted ? 'line-through text-slate-500' : ''}`}>
+                            <div className={`flex-1 min-w-0 ${!isAuthenticated ? 'ml-2' : ''}`}>
+                                <span className={`text-sm font-medium text-slate-200 truncate ${isAuthenticated ? 'group-hover:text-cyan-400' : 'group-hover:text-cyan-400'} transition-colors ${isCompleted ? 'line-through text-slate-500' : ''}`}>
                                     {task.name}
                                 </span>
                                 <p className="text-xs text-slate-400 mt-1 flex items-center flex-wrap gap-x-2">
@@ -202,6 +201,7 @@ const TaskList: React.FC<TaskListProps> = ({ tasks, onUpdateTask, accessToken, p
                 onSave={onUpdateTask}
                 accessToken={accessToken}
                 productMembers={productMembers}
+                loggedInUserId={loggedInUserId}
             />
         )}
     </div>

@@ -1,4 +1,6 @@
 
+
+
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import type { Project, Task, NewTaskPayload, UpdateTaskPayload, ProductMember, UpdateProjectPayload, TechResource } from '../types';
 import { getTasksForProject, createTask, updateTask, updateProject } from '../services/dataverseService';
@@ -12,6 +14,7 @@ import EditProjectModal from './EditProjectModal';
 import TechResourceModal from './TechResourceModal';
 import WebviewModal from './WebviewModal';
 import GenerateDocsModal from './GenerateDocsModal';
+import TaskOverviewModal from './TaskOverviewModal';
 
 interface ProjectDetailProps {
   project: Project;
@@ -63,6 +66,7 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, accessToken, pro
   const [isAddTaskModalOpen, setIsAddTaskModalOpen] = useState(false);
   const [isEditProjectModalOpen, setIsEditProjectModalOpen] = useState(false);
   const [isGenerateDocsModalOpen, setIsGenerateDocsModalOpen] = useState(false);
+  const [isTaskOverviewModalOpen, setIsTaskOverviewModalOpen] = useState(false);
   const [selectedResource, setSelectedResource] = useState<TechResource | null>(null);
   const [webviewUrl, setWebviewUrl] = useState<string | null>(null);
   const [expandedTechGroups, setExpandedTechGroups] = useState<string[]>([]);
@@ -153,9 +157,6 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, accessToken, pro
     });
     const uniqueResources = Array.from(resources.values());
 
-    // FIX: Use a for...of loop instead of reduce for more robust type inference.
-    // This ensures `techStackGrouped` has the correct type `Record<string, TechResource[]>`,
-    // preventing downstream errors where its values were being treated as `unknown`.
     const acc: Record<string, TechResource[]> = {};
     for (const resource of uniqueResources) {
         const groupKey = resource.type || 'Others';
@@ -251,8 +252,6 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, accessToken, pro
         }
         return (
             <div className="mt-2 -mx-2 space-y-1">
-                {/* FIX: Replaced `Object.entries` with `Object.keys` for more robust type inference.
-                    This resolves issues where `resources` was being inferred as `unknown`. */}
                 {Object.keys(techStackGrouped).sort((a, b) => a.localeCompare(b)).map(groupName => {
                     const resources = techStackGrouped[groupName];
                     const isExpanded = expandedTechGroups.includes(groupName);
@@ -384,7 +383,7 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, accessToken, pro
               <div className="flex justify-between items-center">
                   <h3 className="text-lg font-semibold text-white">Basic Information</h3>
                   <a 
-                      href="https://wecare-ii.crm5.dynamics.com/main.aspx?appid=e88d8b40-8616-f011-998a-000d3aa05a71&newWindow=true&pagetype=entitylist&etn=ai_process&viewid=10483d4a-1566-4ca7-a6a3-a28a8b57b35e&viewType=1039"
+                      href="https://wecare-ii.crm5.dynamics.com/main.aspx?appid=b7cc6e53-a6a9-f011-bbd2-000d3aa05f62&pagetype=entitylist&etn=ai_process&viewid=10483d4a-1566-4ca7-a6a3-a28a8b57b35e&viewType=1039"
                       target="_blank"
                       rel="noopener noreferrer"
                       title="View all projects in Dataverse"
@@ -409,7 +408,9 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, accessToken, pro
           {/* Row 2, Left Column */}
           <Card className="lg:col-span-2 flex flex-col min-h-0">
               <div className="flex justify-between items-center flex-shrink-0">
-                <h3 className="text-lg font-semibold text-white">Tasks</h3>
+                <div className="flex items-center gap-2">
+                    <h3 className="text-lg font-semibold text-white">Tasks</h3>
+                </div>
                 <div className="flex items-center gap-2">
                     {isAuthenticated && (
                         <button 
@@ -422,8 +423,17 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, accessToken, pro
                             Add Task
                         </button>
                     )}
+                    <button 
+                        onClick={() => setIsTaskOverviewModalOpen(true)}
+                        className="p-1 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors"
+                        title="Expand View"
+                    >
+                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM11 13a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                        </svg>
+                    </button>
                      <a 
-                        href="https://wecare-ii.crm5.dynamics.com/main.aspx?appid=e88d8b40-8616-f011-998a-000d3aa05a71&pagetype=entitylist&etn=crdfd_tech_tasks&viewid=56cfbfe4-89b0-f011-bbd3-000d3aa25236&viewType=1039"
+                        href="https://wecare-ii.crm5.dynamics.com/main.aspx?appid=b7cc6e53-a6a9-f011-bbd2-000d3aa05f62&pagetype=entitylist&etn=crdfd_tech_tasks&viewid=56cfbfe4-89b0-f011-bbd3-000d3aa25236&viewType=1039"
                         target="_blank"
                         rel="noopener noreferrer"
                         title="View all tasks in Dataverse"
@@ -452,6 +462,7 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, accessToken, pro
                         accessToken={accessToken}
                         productMembers={productMembers}
                         isAuthenticated={isAuthenticated}
+                        loggedInUserId={loggedInUserId}
                         onResourceClick={handleResourceClick}
                     />
                 )}
@@ -463,7 +474,7 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, accessToken, pro
               <div className="flex justify-between items-center flex-shrink-0">
                   <h3 className="text-lg font-semibold text-white">Technical Details</h3>
                   <a 
-                      href="https://wecare-ii.crm5.dynamics.com/main.aspx?appid=e88d8b40-8616-f011-998a-000d3aa05a71&newWindow=true&pagetype=entitylist&etn=crdfd_tech_resource&viewid=0cbdda58-c369-4227-9e20-20d81980ed29&viewType=1039"
+                      href="https://wecare-ii.crm5.dynamics.com/main.aspx?appid=b7cc6e53-a6a9-f011-bbd2-000d3aa05f62&pagetype=entitylist&etn=crdfd_tech_resource&viewid=0cbdda58-c369-4227-9e20-20d81980ed29&viewType=1039"
                       target="_blank"
                       rel="noopener noreferrer"
                       title="View all technical resources in Dataverse"
@@ -518,6 +529,18 @@ const ProjectDetail: React.FC<ProjectDetailProps> = ({ project, accessToken, pro
         <WebviewModal
             url={webviewUrl}
             onClose={() => setWebviewUrl(null)}
+        />
+      )}
+      {isTaskOverviewModalOpen && (
+        <TaskOverviewModal
+            tasks={tasks}
+            onClose={() => setIsTaskOverviewModalOpen(false)}
+            onUpdateTask={handleUpdateTask}
+            accessToken={accessToken}
+            productMembers={productMembers}
+            isAuthenticated={isAuthenticated}
+            loggedInUserId={loggedInUserId}
+            projectName={project.ai_name}
         />
       )}
     </>

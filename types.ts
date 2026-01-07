@@ -1,4 +1,5 @@
 
+
 export type ProjectCategory = 'ACTIVE' | 'MAINTENANCE' | 'PLANNED' | 'COMPLETED';
 export type ProjectStatus = 'Planning' | 'Active' | 'Backlog' | 'Maintenance' | 'Completed / Closed';
 
@@ -54,6 +55,14 @@ export interface TechResource {
   description?: string;
   resourceLink?: string;
   resourceJson?: string;
+}
+
+export interface NewTechResourcePayload {
+  name: string;
+  type?: string;
+  version?: string;
+  description?: string;
+  resourceLink?: string;
 }
 
 export interface Task {
@@ -115,6 +124,7 @@ export interface UpdateTaskPayload {
   status?: TaskStatus;
   priority?: TaskPriority;
   proofOfComplete?: string;
+  techResourceId?: string | null;
 }
 
 export interface NewProjectPayload {

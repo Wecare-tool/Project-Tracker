@@ -5,7 +5,6 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
-      base: '/Project-Tracker/', // Thay đổi tên này nếu repository của bạn có tên khác
       server: {
         port: 3000,
         host: '0.0.0.0',

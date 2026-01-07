@@ -1,14 +1,8 @@
-
-
-import { ACCESS_TOKEN_URL, DATAVERSE_BASE_URL, PROJECTS_ENTITY_SET, TASKS_ENTITY_SET } from '../constants';
-import type { Project, DataverseCollectionResponse, ProjectCategory, Task, TaskStatus, NewTaskPayload, UpdateTaskPayload, TaskPriority, ProductMember, UpdateProjectPayload, NewProjectPayload, WeCareSystem, ProjectStatus, TechResource } from '../types';
+import { ACCESS_TOKEN_URL, DATAVERSE_BASE_URL, PROJECTS_ENTITY_SET, TASKS_ENTITY_SET, TECH_RESOURCES_ENTITY_SET, TECH_RESOURCE_TYPE_MAPPING } from '../constants';
+import type { Project, DataverseCollectionResponse, ProjectCategory, Task, TaskStatus, NewTaskPayload, UpdateTaskPayload, TaskPriority, ProductMember, UpdateProjectPayload, NewProjectPayload, WeCareSystem, ProjectStatus, TechResource, NewTechResourcePayload } from '../types';
 
 /**
  * Converts a 'YYYY-MM-DD' date string to a full ISO 8601 UTC string.
- * The time is set to 08:00 for 'start' and 17:00 for 'end', assuming a UTC+7 timezone.
- * @param dateString The date string in 'YYYY-MM-DD' format.
- * @param timeType Determines whether to use start time (08:00) or end time (17:00).
- * @returns The full ISO string in UTC (e.g., "2025-10-29T01:00:00.000Z"), or undefined if input is invalid.
  */
 const convertDateToUtcPlus7 = (dateString: string | undefined, timeType: 'start' | 'end'): string | undefined => {
     if (!dateString) {
@@ -18,7 +12,6 @@ const convertDateToUtcPlus7 = (dateString: string | undefined, timeType: 'start'
         const time = timeType === 'start' ? '08:00:00' : '17:00:00';
         const isoStringWithOffset = `${dateString}T${time}+07:00`;
         const date = new Date(isoStringWithOffset);
-        // Check for invalid date strings that might not throw but result in 'Invalid Date'
         if (isNaN(date.getTime())) {
             return undefined;
         }
@@ -28,12 +21,8 @@ const convertDateToUtcPlus7 = (dateString: string | undefined, timeType: 'start'
     }
 };
 
-
 /**
- * Formats an ISO date string into a localized date string, ensuring the date doesn't shift due to timezones.
- * This is crucial for handling Dataverse "Date Only" fields that are stored as midnight UTC.
- * @param {string} isoString - The ISO date string from Dataverse.
- * @returns {string} The formatted date string (e.g., "MM/DD/YYYY") or an empty string.
+ * Formats an ISO date string into a localized date string.
  */
 const formatDateOnly = (isoString?: string): string => {
     if (!isoString) {
@@ -41,8 +30,6 @@ const formatDateOnly = (isoString?: string): string => {
     }
     try {
         const date = new Date(isoString);
-        // Using toLocaleDateString with UTC timezone prevents the date from shifting
-        // to the previous day in timezones west of UTC.
         return date.toLocaleDateString(undefined, {
             year: 'numeric',
             month: '2-digit',
@@ -50,14 +37,10 @@ const formatDateOnly = (isoString?: string): string => {
             timeZone: 'UTC',
         });
     } catch {
-        return ''; // Return empty string for invalid dates
+        return ''; 
     }
 };
 
-/**
- * Fetches the access token from the Power Automate flow.
- * @returns {Promise<string>} The access token.
- */
 export async function getAccessToken(): Promise<string> {
   const response = await fetch(ACCESS_TOKEN_URL, {
     method: 'POST',
@@ -66,18 +49,9 @@ export async function getAccessToken(): Promise<string> {
     throw new Error('Failed to fetch access token');
   }
   const data = await response.json();
-  // Assuming the token is directly in the response body or in a property
   return data.access_token || data; 
 }
 
-/**
- * A helper function to perform authenticated fetch requests to the Dataverse API.
- * @param {string} endpoint - The Dataverse API endpoint to call.
- * @param {string} token - The bearer token for authentication.
- * @param {RequestInit} options - Optional fetch options.
- * @param {string | null} loggedInUserId - The GUID of the user to impersonate.
- * @returns {Promise<T>} The JSON response from the API.
- */
 async function dataverseFetch<T>(endpoint: string, token: string, options: RequestInit = {}, loggedInUserId: string | null = null): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set('Authorization', `Bearer ${token}`);
@@ -87,7 +61,6 @@ async function dataverseFetch<T>(endpoint: string, token: string, options: Reque
       headers.set('MSCRMCallerID', loggedInUserId);
   }
   
-  // Always include annotations. For POST, also ask for the created object back.
   const preferHeaders = ['odata.include-annotations="OData.Community.Display.V1.FormattedValue"'];
   if (method === 'POST') {
     preferHeaders.push('return=representation');
@@ -112,16 +85,10 @@ async function dataverseFetch<T>(endpoint: string, token: string, options: Reque
     throw new Error(`Dataverse API Error: ${responseData.error?.message || response.statusText}`);
   }
 
-  // Handle cases where response might be empty for non-204 statuses
   const text = await response.text();
   return text ? JSON.parse(text) : (undefined as T);
 }
 
-/**
- * Fetches all product members for assignment dropdowns.
- * @param {string} token - The access token.
- * @returns {Promise<ProductMember[]>} A list of product members.
- */
 export async function getProductMembers(token: string): Promise<ProductMember[]> {
     const endpoint = `crdfd_productmembers?$select=crdfd_productmemberid,crdfd_name&$orderby=crdfd_name asc`;
     try {
@@ -136,11 +103,6 @@ export async function getProductMembers(token: string): Promise<ProductMember[]>
     }
 }
 
-/**
- * Fetches all "We Care" systems for dropdowns.
- * @param {string} token - The access token.
- * @returns {Promise<WeCareSystem[]>} A list of systems.
- */
 export async function getWeCareSystems(token: string): Promise<WeCareSystem[]> {
     const endpoint = `crdfd_wecaresystems?$select=crdfd_wecaresystemid,crdfd_name&$orderby=crdfd_name asc`;
     try {
@@ -155,21 +117,18 @@ export async function getWeCareSystems(token: string): Promise<WeCareSystem[]> {
     }
 }
 
-
 /**
  * Fetches a list of projects from Dataverse and categorizes them.
- * @param {string} token - The access token.
- * @param {number} [departmentValue] - Optional choice value of the department to filter projects by.
- * @returns {Promise<Project[]>} A list of projects with categories.
+ * Supports filtering by one or more department IDs.
  */
-export async function getProjects(token: string, departmentValue?: number): Promise<Project[]> {
+export async function getProjects(token: string, departmentValues?: number | number[]): Promise<Project[]> {
     const selectFields = [
         'ai_processid', 'ai_name', 'createdon',
-        '_ownerid_value', // User (Owner - Lookup)
-        'crdfd_user', // IT Staff (Text)
-        'crdfd_department_', // Department (Choice)
-        '_crdfd_system_value', // System (Lookup)
-        'crdfd_requester', // Requester (Text)
+        '_ownerid_value', 
+        'crdfd_user', 
+        'crdfd_department_', 
+        '_crdfd_system_value', 
+        'crdfd_requester', 
         'crdfd_processurl',
         'crdfd_allstepurl',
         'crdfd_description',
@@ -178,22 +137,20 @@ export async function getProjects(token: string, departmentValue?: number): Prom
         'crdfd_groupchat',
         'crdfd_user_guide',
         'crdfd_technical_docs',
-        'crdfd_priority', // Priority (Choice)
+        'crdfd_priority', 
         'crdfd_processstatus',
         'crdfd_start_date',
         'crdfd_end_date',
     ].join(',');
 
     let filter: string;
-    const GENERAL_DEPARTMENT_VALUE = 191920006;
     
-    if (departmentValue !== undefined) {
-        // For logged-in users, filter by department and show Active, Maintenance, Backlog and Completed projects.
-        // Excludes Planned (191920000) only.
-        filter = `statecode eq 0 and crdfd_processstatus ne 191920000 and crdfd_department_ eq ${departmentValue}`;
+    if (departmentValues !== undefined) {
+        const values = Array.isArray(departmentValues) ? departmentValues : [departmentValues];
+        const depFilter = values.map(v => `crdfd_department_ eq ${v}`).join(' or ');
+        filter = `statecode eq 0 and crdfd_processstatus ne 191920000 and (${depFilter})`;
     } else {
-        // For guests (not logged in), only show Active (191920001) and Maintenance (191920003) projects from the General department.
-        filter = `statecode eq 0 and (crdfd_processstatus eq 191920001 or crdfd_processstatus eq 191920003) and crdfd_department_ eq ${GENERAL_DEPARTMENT_VALUE}`;
+        filter = `statecode eq 0 and (crdfd_processstatus eq 191920001 or crdfd_processstatus eq 191920003)`;
     }
 
     const endpoint = `${PROJECTS_ENTITY_SET}?$select=${selectFields}&$filter=${filter}&$orderby=createdon desc`;
@@ -236,26 +193,19 @@ export async function getProjects(token: string, departmentValue?: number): Prom
 
 const mapDataverseStatusToAppStatus = (dataverseStatus: string): TaskStatus => {
   switch (dataverseStatus) {
-    case 'Not Start':
-      return 'To Do';
-    case 'In Progress':
-      return 'In Progress';
-    case 'Review':
-      return 'Review';
-    case 'Completed':
-      return 'Completed';
-    case 'Pending':
-      return 'Pending';
-    case 'Cancelled':
-      return 'Cancelled';
-    default:
-      return 'Unknown';
+    case 'Not Start': return 'To Do';
+    case 'In Progress': return 'In Progress';
+    case 'Review': return 'Review';
+    case 'Completed': return 'Completed';
+    case 'Pending': return 'Pending';
+    case 'Cancelled': return 'Cancelled';
+    default: return 'Unknown';
   }
 };
 
 const mapAppStatusToDataverseValue = (appStatus: TaskStatus): number | undefined => {
     switch(appStatus) {
-        case 'To Do': return 191920000; // Not Start
+        case 'To Do': return 191920000;
         case 'In Progress': return 191920001;
         case 'Review': return 191920002;
         case 'Completed': return 191920003;
@@ -304,7 +254,7 @@ const mapDataverseProjectStatusToAppStatus = (dataverseStatus: string): ProjectS
         case 'Completed / Closed':
             return dataverseStatus;
         default:
-            return 'Backlog'; // A safe default
+            return 'Backlog'; 
     }
 }
 
@@ -328,18 +278,17 @@ const commonTechResourceSelect = 'crdfd_tech_resourceid,crdfd_name,crdfd_type,cr
 
 const transformDataverseTask = (t: any): Task => {
     const rawStatus = t['crdfd_taskstatus@OData.Community.Display.V1.FormattedValue'];
-    const stateCode = t.statecode; // 0 for Active, 1 for Inactive
+    const stateCode = t.statecode; 
     const rawPriority = t['crdfd_priority@OData.Community.Display.V1.FormattedValue'];
     
     let status: TaskStatus;
-    if (stateCode === 1) { // Inactive
-        // For this app, any inactive task that isn't explicitly 'Completed' is considered 'Cancelled'.
+    if (stateCode === 1) { 
         if (rawStatus === 'Completed') {
             status = 'Completed';
         } else {
             status = 'Cancelled';
         }
-    } else { // Active
+    } else { 
         status = mapDataverseStatusToAppStatus(rawStatus);
     }
 
@@ -391,12 +340,6 @@ export async function getTasksForProject(projectId: string, token: string): Prom
   return response.value.map(transformDataverseTask);
 }
 
-/**
- * Fetches tasks for a specific list of project IDs.
- * @param {string[]} projectIds - An array of project GUIDs.
- * @param {string} token - The access token.
- * @returns {Promise<Task[]>} A list of tasks belonging to the specified projects.
- */
 export async function getTasksForProjects(projectIds: string[], token: string): Promise<Task[]> {
     if (projectIds.length === 0) {
         return [];
@@ -411,7 +354,6 @@ export async function getTasksForProjects(projectIds: string[], token: string): 
 
 export async function createTask(taskData: NewTaskPayload, token: string, loggedInUserId: string | null): Promise<void> {
   const endpoint = TASKS_ENTITY_SET;
-  
   const payload: any = {
     "crdfd_name": taskData.name,
     "crdfd_description": taskData.description,
@@ -422,7 +364,6 @@ export async function createTask(taskData: NewTaskPayload, token: string, logged
       payload["crdfd_Assignedtask@odata.bind"] = `/crdfd_productmembers(${taskData.assigneeId})`;
   }
 
-  // Convert dates to UTC+7 at specific times
   payload.crdfd_start_date = convertDateToUtcPlus7(taskData.startDate, 'start');
   payload.crdfd_enddate = convertDateToUtcPlus7(taskData.endDate, 'end');
 
@@ -432,7 +373,6 @@ export async function createTask(taskData: NewTaskPayload, token: string, logged
   const priorityValue = taskData.priority ? mapAppPriorityToDataverseValue(taskData.priority) : undefined;
   if (priorityValue) payload["crdfd_priority"] = priorityValue;
   
-
   await dataverseFetch<void>(endpoint, token, {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -442,20 +382,16 @@ export async function createTask(taskData: NewTaskPayload, token: string, logged
 export async function updateTask(taskId: string, taskData: UpdateTaskPayload, token: string, loggedInUserId: string | null): Promise<void> {
   const endpoint = `${TASKS_ENTITY_SET}(${taskId})`;
 
-  // Special handling for deactivation (Cancelling a task).
   if (taskData.status === 'Cancelled') {
       const deactivatePayload = {
-          statecode: 1, // Inactive
-          // We must provide a valid status reason for the inactive state.
-          // Since one for "Cancelled" may not exist, we'll re-use an existing one as a workaround.
-          // The UI will interpret any inactive task as "Cancelled".
-          crdfd_taskstatus: 191920002, // Corresponds to 'Review'
+          statecode: 1, 
+          crdfd_taskstatus: 191920002, 
       };
       await dataverseFetch<void>(endpoint, token, {
           method: 'PATCH',
           body: JSON.stringify(deactivatePayload),
       }, loggedInUserId);
-      return; // Exit after deactivating.
+      return; 
   }
   
   const payload: any = {};
@@ -463,7 +399,6 @@ export async function updateTask(taskId: string, taskData: UpdateTaskPayload, to
   if (taskData.description !== undefined) payload.crdfd_description = taskData.description;
   if (taskData.proofOfComplete !== undefined) payload.crdfd_proof_of_complete_ = taskData.proofOfComplete;
   
-  // Convert dates to UTC+7 at specific times, or set to null if cleared
   if (taskData.startDate !== undefined) {
     payload.crdfd_start_date = taskData.startDate ? convertDateToUtcPlus7(taskData.startDate, 'start') : null;
   }
@@ -475,16 +410,28 @@ export async function updateTask(taskId: string, taskData: UpdateTaskPayload, to
     if (taskData.assigneeId) {
         payload["crdfd_Assignedtask@odata.bind"] = `/crdfd_productmembers(${taskData.assigneeId})`;
     } else {
-        // Disassociate if assigneeId is null or empty
         try {
             await dataverseFetch<void>(`${endpoint}/crdfd_Assignedtask/$ref`, token, { method: 'DELETE' }, loggedInUserId);
         } catch (e: any) {
-            // A 404 is expected if it's already null, so we can ignore it.
             if (!e.message || !e.message.includes('404')) {
-                throw e; // re-throw other errors
+                throw e; 
             }
         }
     }
+  }
+
+  if (taskData.techResourceId !== undefined) {
+      if (taskData.techResourceId) {
+          payload["crdfd_Tech_Resource@odata.bind"] = `/${TECH_RESOURCES_ENTITY_SET}(${taskData.techResourceId})`;
+      } else {
+          try {
+              await dataverseFetch<void>(`${endpoint}/crdfd_Tech_Resource/$ref`, token, { method: 'DELETE' }, loggedInUserId);
+          } catch (e: any) {
+              if (!e.message || !e.message.includes('404')) {
+                  throw e;
+              }
+          }
+      }
   }
   
   if (taskData.status) {
@@ -497,7 +444,6 @@ export async function updateTask(taskId: string, taskData: UpdateTaskPayload, to
     if (priorityValue) payload.crdfd_priority = priorityValue;
   }
 
-
   if (Object.keys(payload).length > 0) {
     await dataverseFetch<void>(endpoint, token, {
       method: 'PATCH',
@@ -508,22 +454,15 @@ export async function updateTask(taskId: string, taskData: UpdateTaskPayload, to
 
 export async function createProject(projectData: NewProjectPayload, token: string, loggedInUserId: string | null): Promise<Project> {
   const endpoint = PROJECTS_ENTITY_SET;
-  
-  const payload: any = {
-    "ai_name": projectData.ai_name,
-  };
+  const payload: any = { "ai_name": projectData.ai_name };
 
   if (projectData.crdfd_systemid) {
     payload["crdfd_System@odata.bind"] = `/crdfd_wecaresystems(${projectData.crdfd_systemid})`;
   }
-  
-  if (projectData.crdfd_department_ !== undefined) {
-      payload.crdfd_department_ = projectData.crdfd_department_;
-  }
-
+  if (projectData.crdfd_department_ !== undefined) payload.crdfd_department_ = projectData.crdfd_department_;
   if (projectData.crdfd_description) payload.crdfd_description = projectData.crdfd_description;
   if (projectData.crdfd_requester) payload.crdfd_requester = projectData.crdfd_requester;
-  if (projectData.crdfd_user) payload.crdfd_user = projectData.crdfd_user; // IT Staff
+  if (projectData.crdfd_user) payload.crdfd_user = projectData.crdfd_user; 
   if (projectData.crdfd_groupchat) payload.crdfd_groupchat = projectData.crdfd_groupchat;
   if (projectData.crdfd_user_guide) payload.crdfd_user_guide = projectData.crdfd_user_guide;
   if (projectData.crdfd_technical_docs) payload.crdfd_technical_docs = projectData.crdfd_technical_docs;
@@ -532,19 +471,13 @@ export async function createProject(projectData: NewProjectPayload, token: strin
   if (projectData.crdfd_start_date) payload.crdfd_start_date = projectData.crdfd_start_date;
   if (projectData.crdfd_end_date) payload.crdfd_end_date = projectData.crdfd_end_date;
 
-
   if (projectData.crdfd_priority) {
       const priorityValue = mapAppPriorityToDataverseValue(projectData.crdfd_priority);
-      if (priorityValue !== undefined) {
-          payload.crdfd_priority = priorityValue;
-      }
+      if (priorityValue !== undefined) payload.crdfd_priority = priorityValue;
   }
-  
   if (projectData.crdfd_processstatus) {
       const statusValue = mapAppProjectStatusToDataverseValue(projectData.crdfd_processstatus);
-      if (statusValue !== undefined) {
-          payload.crdfd_processstatus = statusValue;
-      }
+      if (statusValue !== undefined) payload.crdfd_processstatus = statusValue;
   }
 
   return await dataverseFetch<Project>(endpoint, token, {
@@ -555,35 +488,27 @@ export async function createProject(projectData: NewProjectPayload, token: strin
 
 export async function updateProject(projectId: string, projectData: UpdateProjectPayload, token: string, loggedInUserId: string | null): Promise<void> {
     const endpoint = `${PROJECTS_ENTITY_SET}(${projectId})`;
-
     const payload: any = {};
     if (projectData.ai_name !== undefined) payload.ai_name = projectData.ai_name;
     if (projectData.crdfd_description !== undefined) payload.crdfd_description = projectData.crdfd_description;
     if (projectData.crdfd_requester !== undefined) payload.crdfd_requester = projectData.crdfd_requester;
-    if (projectData.crdfd_user !== undefined) payload.crdfd_user = projectData.crdfd_user; // IT Staff
+    if (projectData.crdfd_user !== undefined) payload.crdfd_user = projectData.crdfd_user;
     if (projectData.crdfd_groupchat !== undefined) payload.crdfd_groupchat = projectData.crdfd_groupchat;
     if (projectData.crdfd_user_guide !== undefined) payload.crdfd_user_guide = projectData.crdfd_user_guide;
     if (projectData.crdfd_technical_docs !== undefined) payload.crdfd_technical_docs = projectData.crdfd_technical_docs;
     if (projectData.crdfd_processurl !== undefined) payload.crdfd_processurl = projectData.crdfd_processurl;
     if (projectData.crdfd_allstepurl !== undefined) payload.crdfd_allstepurl = projectData.crdfd_allstepurl;
 
-    // FIX: Convert empty string to null for date fields to allow clearing them and prevent write errors.
     if (projectData.crdfd_start_date !== undefined) payload.crdfd_start_date = projectData.crdfd_start_date || null;
     if (projectData.crdfd_end_date !== undefined) payload.crdfd_end_date = projectData.crdfd_end_date || null;
 
-
     if (projectData.crdfd_priority) {
         const priorityValue = mapAppPriorityToDataverseValue(projectData.crdfd_priority);
-        if (priorityValue !== undefined) {
-            payload.crdfd_priority = priorityValue;
-        }
+        if (priorityValue !== undefined) payload.crdfd_priority = priorityValue;
     }
-    
     if (projectData.crdfd_processstatus) {
         const statusValue = mapAppProjectStatusToDataverseValue(projectData.crdfd_processstatus);
-        if (statusValue !== undefined) {
-            payload.crdfd_processstatus = statusValue;
-        }
+        if (statusValue !== undefined) payload.crdfd_processstatus = statusValue;
     }
 
     if (Object.keys(payload).length > 0) {
@@ -592,4 +517,44 @@ export async function updateProject(projectId: string, projectData: UpdateProjec
             body: JSON.stringify(payload),
         }, loggedInUserId);
     }
+}
+
+export async function getTechResources(token: string): Promise<TechResource[]> {
+    const endpoint = `${TECH_RESOURCES_ENTITY_SET}?$select=crdfd_tech_resourceid,crdfd_name,crdfd_type,crdfd_version,crdfd_description,crdfd_resourcelink,crdfd_resourcejson&$orderby=createdon desc`;
+    try {
+        const response = await dataverseFetch<DataverseCollectionResponse<any>>(endpoint, token);
+        return response.value.map((r: any) => ({
+            id: r.crdfd_tech_resourceid,
+            name: r.crdfd_name,
+            type: r['crdfd_type@OData.Community.Display.V1.FormattedValue'] || r.crdfd_type,
+            version: r.crdfd_version,
+            description: r.crdfd_description,
+            resourceLink: r.crdfd_resourcelink,
+            resourceJson: r.crdfd_resourcejson,
+        }));
+    } catch (error) {
+        console.error("Failed to fetch tech resources:", error);
+        return [];
+    }
+}
+
+export async function createTechResource(data: NewTechResourcePayload, token: string, loggedInUserId: string | null): Promise<string> {
+    const endpoint = TECH_RESOURCES_ENTITY_SET;
+    const payload: any = {
+        crdfd_name: data.name,
+        crdfd_version: data.version,
+        crdfd_description: data.description,
+        crdfd_resourcelink: data.resourceLink
+    };
+
+    if (data.type && TECH_RESOURCE_TYPE_MAPPING[data.type]) {
+        payload.crdfd_type = TECH_RESOURCE_TYPE_MAPPING[data.type];
+    }
+    
+    const response = await dataverseFetch<any>(endpoint, token, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+    }, loggedInUserId);
+    
+    return response.crdfd_tech_resourceid;
 }

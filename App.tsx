@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useCallback } from 'react';
 import ProjectList from './components/ProjectList';
 import ErrorMessage from './components/ErrorMessage';
@@ -19,18 +17,19 @@ interface LoggedInUser {
 }
 
 const USER_DEPARTMENT_MAP: { [userId: string]: number } = {
-    // Hieu Le Hoang -> General
-    '399bde80-1c54-ed11-9562-000d3ac7ccec': 191920006,
-    // Hoàng Trần -> General
-    '829bde80-1c54-ed11-9562-000d3ac7ccec': 191920006,
-    // Thông Cao Văn -> Logistics
-    '12b2dda8-e49f-ef11-8a69-000d3ac8d88c': 191920002,
-    // Hoàng Nguyễn Minh -> Procument
-    '106ab015-d788-ee11-be36-000d3aa3f53e': 191920001,
-    // Nghĩa Phan Trọng -> Procument
-    'dced0234-5bb0-ef11-b8e8-000d3ac7ae9c': 191920001,
+    '399bde80-1c54-ed11-9562-000d3ac7ccec': 191920006, // Hieu Le Hoang -> General
+    '829bde80-1c54-ed11-9562-000d3ac7ccec': 191920006, // Hoàng Trần -> General
+    '12b2dda8-e49f-ef11-8a69-000d3ac8d88c': 191920002, // Thông Cao Văn -> Logistics
+    '106ab015-d788-ee11-be36-000d3aa3f53e': 191920001, // Hoàng Nguyễn Minh -> Procument
+    'dced0234-5bb0-ef11-b8e8-000d3ac7ae9c': 191920001, // Nghĩa Phan Trọng -> Procument
+    '654a811b-7a8f-f011-b4cc-0022485a6354': 191920003, // Lê Văn Thơ -> Finance
 };
 
+const LOGISTICS_DEP_ID = 191920002;
+const GENERAL_DEP_ID = 191920006;
+
+// Default View: General per user request
+const DEFAULT_DEP_FILTER = GENERAL_DEP_ID;
 
 const App: React.FC = () => {
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -46,6 +45,9 @@ const App: React.FC = () => {
   const [loggedInUser, setLoggedInUser] = useState<LoggedInUser | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   
+  // Defaulting to General department
+  const [departmentFilter, setDepartmentFilter] = useState<number | number[] | undefined>(DEFAULT_DEP_FILTER);
+  
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,7 +60,6 @@ const App: React.FC = () => {
       const token = await getAccessToken();
       setAccessToken(token);
 
-      // Fetch members and systems in parallel as they are small and independent.
       const [fetchedMembers, fetchedSystems] = await Promise.all([
           getProductMembers(token),
           getWeCareSystems(token),
@@ -66,14 +67,15 @@ const App: React.FC = () => {
       setProductMembers(fetchedMembers);
       setWeCareSystems(fetchedSystems);
       
-      const departmentValue = loggedInUser ? USER_DEPARTMENT_MAP[loggedInUser.id] : undefined;
+      let depToFetch = departmentFilter;
+      // If manually cleared (All selected), then we check if there's a logged-in user to default to their dept
+      if (depToFetch === undefined && loggedInUser) {
+        depToFetch = USER_DEPARTMENT_MAP[loggedInUser.id];
+      }
 
-      // Fetch projects first. This is a single, relatively fast call.
-      const fetchedProjects = await getProjects(token, departmentValue);
+      const fetchedProjects = await getProjects(token, depToFetch);
       setProjects(fetchedProjects);
 
-      // Then, fetch tasks ONLY for the projects we just received.
-      // This significantly reduces the scope of the task query and prevents throttling.
       if (fetchedProjects.length > 0) {
         const projectIds = fetchedProjects.map(p => p.ai_processid);
         const fetchedTasks = await getTasksForProjects(projectIds, token);
@@ -87,7 +89,7 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [loggedInUser]);
+  }, [loggedInUser, departmentFilter]);
 
   useEffect(() => {
     fetchInitialData();
@@ -95,11 +97,13 @@ const App: React.FC = () => {
 
   const handleLogin = (user: LoggedInUser) => {
     setLoggedInUser(user);
+    setDepartmentFilter(USER_DEPARTMENT_MAP[user.id]);
     setIsLoginModalOpen(false);
   };
 
   const handleLogout = () => {
     setLoggedInUser(null);
+    setDepartmentFilter(DEFAULT_DEP_FILTER); 
   };
 
   const handleSelectView = (newView: 'dashboard' | 'project', projectId?: string) => {
@@ -109,7 +113,7 @@ const App: React.FC = () => {
     } else if (newView === 'dashboard') {
         setSelectedProjectId(null);
     }
-    setIsSidebarOpen(false); // Close sidebar after selection on mobile
+    setIsSidebarOpen(false); 
   };
   
   const handleAddProject = async (projectData: NewProjectPayload) => {
@@ -118,11 +122,9 @@ const App: React.FC = () => {
     }
 
     try {
-        // Step 1: Create the project and get its ID
         const newProject = await createProject(projectData, accessToken, loggedInUser.id);
         const newProjectId = newProject.ai_processid;
 
-        // Step 2: Create default tasks in parallel
         const taskCreationPromises = DEFAULT_TASKS.map(task => {
             const taskPayload: NewTaskPayload = {
                 name: task.name,
@@ -135,14 +137,12 @@ const App: React.FC = () => {
         });
         await Promise.all(taskCreationPromises);
 
-        // Step 3: Refresh UI and navigate to the new project
-        setIsAddProjectModalOpen(false); // Close modal on success
-        await fetchInitialData(); // Refresh project list
-        handleSelectView('project', newProjectId); // Navigate
+        setIsAddProjectModalOpen(false);
+        await fetchInitialData(); 
+        handleSelectView('project', newProjectId); 
 
     } catch (err) {
         console.error("Failed to create project with default tasks:", err);
-        // Re-throw to be caught and displayed by the modal
         throw err;
     }
   };
@@ -178,11 +178,8 @@ const App: React.FC = () => {
                 loggedInUserId={loggedInUser?.id || null}
             />;
         }
-        // If we are supposed to show a project but cannot, we fall through
-        // and render the dashboard below, without changing state during render.
     }
 
-    // Default to dashboard for the 'dashboard' view or if the project view fails
     return <Dashboard 
         projects={projects} 
         allTasks={allTasks}
@@ -190,22 +187,21 @@ const App: React.FC = () => {
         isLoading={isLoading}
         loggedInUser={loggedInUser}
         onGenerateReport={() => setIsReportModalOpen(true)}
+        selectedDepartment={departmentFilter}
+        onDepartmentChange={setDepartmentFilter}
     />;
   };
 
   return (
     <>
       <div className="min-h-screen font-sans text-slate-300 lg:grid lg:grid-cols-[296px_1fr]">
-          {/* Mobile Sidebar */}
           {isSidebarOpen && (
             <div className="lg:hidden">
-                {/* Backdrop */}
                 <div 
                     className="fixed inset-0 bg-black/60 z-30" 
                     onClick={() => setIsSidebarOpen(false)}
                     aria-hidden="true"
                 ></div>
-                {/* Sidebar Content */}
                 <aside className="fixed inset-y-0 left-0 z-40 w-72 bg-slate-900 p-4">
                     <ProjectList
                         projects={projects}
@@ -228,7 +224,6 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {/* Desktop Sidebar */}
           <aside className="h-screen sticky top-0 bg-slate-900 pt-4 pb-4 pl-4 hidden lg:block">
               <ProjectList
                   projects={projects}
@@ -244,21 +239,20 @@ const App: React.FC = () => {
           </aside>
           
           <main className="h-screen overflow-y-auto bg-slate-900">
-              {/* Mobile Header */}
               <header className="sticky top-0 z-20 flex items-center justify-between gap-4 p-4 bg-slate-900/80 backdrop-blur-sm border-b border-slate-700 lg:hidden">
                   <button 
                       onClick={() => setIsSidebarOpen(true)}
                       className="p-1 text-slate-400 hover:text-white"
                       aria-label="Mở menu"
                   >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24" stroke="currentColor">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
                       </svg>
                   </button>
                   <h2 className="text-lg font-semibold text-white truncate">
                       {view === 'dashboard' ? 'Dashboard' : (selectedProject?.ai_name || 'Chi tiết dự án')}
                   </h2>
-                  <div className="w-6" />{/* Spacer for alignment */}
+                  <div className="w-6" />
               </header>
               {renderMainContent()}
           </main>
@@ -276,6 +270,7 @@ const App: React.FC = () => {
             productMembers={productMembers}
             allTasks={allTasks}
             accessToken={accessToken}
+            loggedInUser={loggedInUser}
           />
       )}
       {isLoginModalOpen && (
