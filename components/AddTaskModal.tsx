@@ -12,12 +12,22 @@ interface AddTaskModalProps {
 
 const formElementClasses = "w-full bg-slate-800 border border-slate-600 rounded-md p-2 text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-500 transition-colors";
 
+const getTodayDateString = () => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
 const AddTaskModal: React.FC<AddTaskModalProps> = ({ onClose, onSave, productMembers, accessToken }) => {
+  const todayStr = getTodayDateString();
+  
   const [formData, setFormData] = useState<Omit<NewTaskPayload, 'projectId'>>({
       name: '',
       description: '',
-      startDate: '',
-      endDate: '',
+      startDate: todayStr,
+      endDate: todayStr,
       assigneeId: '',
       status: 'To Do',
       priority: 'Medium',

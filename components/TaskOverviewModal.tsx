@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import type { Task, ProductMember, UpdateTaskPayload, TaskStatus, TechResource } from '../types';
 import TaskDetailModal from './TaskDetailModal';
@@ -38,7 +39,7 @@ interface FilterOption {
 
 const FilterDropdown: React.FC<{ 
     label: string; 
-    value: string | null; 
+    value: string | string[] | null; 
     options: FilterOption[]; 
     onChange: (val: string | null) => void 
 }> = ({ label, value, options, onChange }) => {
@@ -55,7 +56,10 @@ const FilterDropdown: React.FC<{
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
-    const selectedLabel = options.find(o => o.value === value)?.label || `All ${label}s`;
+    const selectedLabel = Array.isArray(value) 
+        ? "To Do & In Progress"
+        : (options.find(o => o.value === value)?.label || `All ${label}s`);
+        
     const isActive = value !== null;
 
     return (
@@ -119,14 +123,26 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
     loggedInUserId,
     projectName
 }) => {
-  const [viewMode, setViewMode] = useState<'List' | 'Kanban' | 'Timeline'>('List');
+  const [viewMode, setViewMode] = useState<'List' | 'Kanban' | 'Timeline'>('Kanban');
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [filterText, setFilterText] = useState('');
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [draggedOverColumn, setDraggedOverColumn] = useState<string | null>(null);
   
+  // Resizable column width for Timeline - default to 480 to see full name
+  const [timelineColWidth, setTimelineColWidth] = useState(480);
+
   // Filters State
   const [filterAssignee, setFilterAssignee] = useState<string | null>(null);
-  const [filterStatus, setFilterStatus] = useState<string | null>(null);
+  const [filterStatus, setFilterStatus] = useState<string | string[] | null>(null);
   const [filterPriority, setFilterPriority] = useState<string | null>(null);
+
+  // Helper to normalize dates to local midnight to avoid time zone/hour shift issues in calculation
+  const normalizeToLocalMidnight = (date: Date) => {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
 
   // Filter and Sort tasks based on criteria and chronological order
   const filteredTasks = useMemo(() => {
@@ -135,13 +151,21 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
                             t.assignee?.toLowerCase().includes(filterText.toLowerCase());
         
         const matchesAssignee = filterAssignee ? t.assigneeId === filterAssignee : true;
-        const matchesStatus = filterStatus ? t.status === filterStatus : true;
+        
+        let matchesStatus = true;
+        if (filterStatus) {
+            if (Array.isArray(filterStatus)) {
+                matchesStatus = filterStatus.includes(t.status);
+            } else {
+                matchesStatus = t.status === filterStatus;
+            }
+        }
+
         const matchesPriority = filterPriority ? t.priority === filterPriority : true;
 
         return matchesText && matchesAssignee && matchesStatus && matchesPriority;
     });
 
-    // Chronological Sort: End date first, then name
     return [...filtered].sort((a, b) => {
         const dateA = a.endDateRaw ? new Date(a.endDateRaw).getTime() : Infinity;
         const dateB = b.endDateRaw ? new Date(b.endDateRaw).getTime() : Infinity;
@@ -156,10 +180,67 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
   };
 
   const handleUpdate = async (taskId: string, data: UpdateTaskPayload) => {
-      await onUpdateTask(taskId, data);
+      setIsUpdating(true);
+      try {
+        await onUpdateTask(taskId, data);
+      } finally {
+        setIsUpdating(false);
+      }
   };
 
-  // Filter Options
+  const handleDragStart = (e: React.DragEvent, taskId: string) => {
+    e.dataTransfer.setData("taskId", taskId);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragOver = (e: React.DragEvent, status: string) => {
+    e.preventDefault();
+    setDraggedOverColumn(status);
+  };
+
+  const handleDrop = async (e: React.DragEvent, status: TaskStatus) => {
+    e.preventDefault();
+    setDraggedOverColumn(null);
+    const taskId = e.dataTransfer.getData("taskId");
+    if (taskId) {
+        const task = tasks.find(t => t.id === taskId);
+        if (task && task.status !== status) {
+            await handleUpdate(taskId, { status });
+        }
+    }
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = timelineColWidth;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+        const delta = moveEvent.clientX - startX;
+        setTimelineColWidth(Math.max(120, Math.min(1000, startWidth + delta)));
+    };
+
+    const handleMouseUp = () => {
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+        document.body.style.cursor = 'default';
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    document.body.style.cursor = 'col-resize';
+  };
+
+  const formatTooltipDate = (isoString?: string) => {
+      if (!isoString) return 'N/A';
+      const date = new Date(isoString);
+      if (isNaN(date.getTime())) return 'N/A';
+      const day = String(date.getDate()).padStart(2, '0');
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const year = date.getFullYear();
+      return `${day}/${month}/${year}`;
+  };
+
   const assigneeOptions: FilterOption[] = [
       { label: 'All Assignees', value: null },
       ...productMembers.map(m => ({ label: m.name.split('_')[0], value: m.id }))
@@ -183,16 +264,24 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
       { label: 'N/A', value: 'N/A' },
   ];
 
-  // --- KANBAN VIEW ---
   const renderKanbanView = () => {
     const columns: TaskStatus[] = ['To Do', 'In Progress', 'Review', 'Completed', 'Pending'];
     
     return (
-        <div className="flex h-full gap-4 overflow-x-auto pb-4 snap-x px-2">
+        <div className="flex h-full gap-4 pb-4 px-2 min-w-0 w-full overflow-hidden">
             {columns.map(status => {
                 const columnTasks = filteredTasks.filter(t => t.status === status);
+                const isDragOver = draggedOverColumn === status;
                 return (
-                    <div key={status} className="flex-shrink-0 w-80 flex flex-col bg-slate-900/50 rounded-xl border border-slate-800 h-full max-h-full snap-start">
+                    <div 
+                        key={status} 
+                        className={`flex-1 min-w-[200px] flex flex-col bg-slate-900/50 rounded-xl border transition-all duration-200 h-full max-h-full ${
+                            isDragOver ? 'border-cyan-500 bg-cyan-500/5 ring-1 ring-cyan-500/20' : 'border-slate-800'
+                        }`}
+                        onDragOver={(e) => handleDragOver(e, status)}
+                        onDrop={(e) => handleDrop(e, status)}
+                        onDragLeave={() => setDraggedOverColumn(null)}
+                    >
                         <div className="p-3 border-b border-slate-800 flex justify-between items-center sticky top-0 bg-slate-900/90 backdrop-blur-sm rounded-t-xl z-10">
                             <div className="flex items-center gap-2">
                                 <div className={`w-2 h-2 rounded-full ${
@@ -201,7 +290,7 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
                                     status === 'Review' ? 'bg-purple-500' :
                                     status === 'Completed' ? 'bg-emerald-500' : 'bg-amber-500'
                                 }`}></div>
-                                <h3 className="font-semibold text-slate-200 text-sm">{status}</h3>
+                                <h3 className="font-semibold text-slate-200 text-sm whitespace-nowrap">{status}</h3>
                             </div>
                             <span className="bg-slate-800 text-slate-400 text-xs px-2 py-0.5 rounded-full border border-slate-700">{columnTasks.length}</span>
                         </div>
@@ -209,8 +298,10 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
                             {columnTasks.map(task => (
                                 <div 
                                     key={task.id}
+                                    draggable={isAuthenticated && !isUpdating}
+                                    onDragStart={(e) => handleDragStart(e, task.id)}
                                     onClick={() => handleTaskClick(task)}
-                                    className="p-3 bg-slate-800 border border-slate-700 rounded-lg shadow-sm hover:border-slate-600 hover:shadow-md transition-all group flex flex-col gap-2 cursor-pointer"
+                                    className="p-3 bg-slate-800 border border-slate-700 rounded-lg shadow-sm hover:border-slate-600 hover:shadow-md transition-all group flex flex-col gap-2 cursor-pointer active:cursor-grabbing"
                                 >
                                     <p className="text-sm font-medium text-slate-200 line-clamp-2 group-hover:text-cyan-400 transition-colors leading-snug">{task.name}</p>
                                     <div className="flex justify-between items-end pt-2 mt-auto border-t border-slate-700/50">
@@ -227,8 +318,8 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
                                 </div>
                             ))}
                             {columnTasks.length === 0 && (
-                                <div className="flex flex-col items-center justify-center h-24 text-slate-600 italic border border-dashed border-slate-800 rounded-lg m-1 bg-slate-800/20">
-                                    <span className="text-xs">Empty</span>
+                                <div className="h-full flex items-center justify-center py-8">
+                                    <span className="text-xs text-slate-700 italic">No tasks</span>
                                 </div>
                             )}
                         </div>
@@ -239,7 +330,6 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
     );
   };
 
-  // --- TIMELINE VIEW ---
   const validTimelineTasks = useMemo(() => {
     return filteredTasks
         .filter(t => t.startDateRaw && t.endDateRaw && !isNaN(new Date(t.startDateRaw).getTime()) && !isNaN(new Date(t.endDateRaw).getTime()))
@@ -262,13 +352,15 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
         );
     }
 
-    // Determine Range
-    let minDate = new Date(Math.min(...validTimelineTasks.map(t => t.start.getTime())));
-    let maxDate = new Date(Math.max(...validTimelineTasks.map(t => t.end.getTime())));
+    let minDateRaw = new Date(Math.min(...validTimelineTasks.map(t => t.start.getTime())));
+    let maxDateRaw = new Date(Math.max(...validTimelineTasks.map(t => t.end.getTime())));
     
-    // Add buffer
+    // Normalize bounds to local midnights
+    let minDate = normalizeToLocalMidnight(minDateRaw);
     minDate.setDate(minDate.getDate() - 7);
-    maxDate.setDate(maxDate.getDate() + 7);
+    
+    let maxDate = normalizeToLocalMidnight(maxDateRaw);
+    maxDate.setDate(maxDate.getDate() + 14);
 
     const dates: Date[] = [];
     const currDate = new Date(minDate);
@@ -277,7 +369,8 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
         currDate.setDate(currDate.getDate() + 1);
     }
 
-    const DAY_WIDTH = 44; // px
+    // Increased widths
+    const DAY_WIDTH = 120; 
     const totalWidth = dates.length * DAY_WIDTH;
 
     const getStatusColor = (status: TaskStatus) => {
@@ -294,10 +387,19 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
         <div className="h-full flex flex-col bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-inner">
             <div className="flex-1 flex overflow-hidden relative">
                 <div className="flex-1 overflow-auto custom-scrollbar relative bg-slate-900">
-                     <div style={{ width: totalWidth + 280, minHeight: '100%' }} className="flex flex-col">
+                     <div style={{ width: totalWidth + timelineColWidth, minHeight: '100%' }} className="flex flex-col">
                         <div className="flex sticky top-0 z-30 bg-slate-900 border-b border-slate-800 h-[48px]">
-                            <div className="sticky left-0 w-72 flex-shrink-0 bg-slate-900 border-r border-slate-800 flex items-center px-6 font-semibold text-xs uppercase text-slate-500 tracking-wider z-40 shadow-[4px_0_10px_rgba(0,0,0,0.2)]">
+                            <div 
+                                style={{ width: timelineColWidth }}
+                                className="sticky left-0 flex-shrink-0 bg-slate-900 border-r border-slate-800 flex items-center px-6 font-semibold text-xs uppercase text-slate-500 tracking-wider z-40 shadow-[4px_0_10px_rgba(0,0,0,0.2)]"
+                            >
                                 Task Name
+                                <div 
+                                    onMouseDown={handleMouseDown}
+                                    className="absolute -right-1 top-0 bottom-0 w-2 cursor-col-resize hover:bg-cyan-500/50 transition-colors z-50 flex items-center justify-center group/resizer"
+                                >
+                                    <div className="w-px h-6 bg-slate-700 group-hover/resizer:bg-cyan-400"></div>
+                                </div>
                             </div>
                             <div className="flex relative z-10">
                                 {dates.map((date, i) => {
@@ -305,7 +407,7 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
                                     return (
                                         <div 
                                             key={i} 
-                                            className={`flex-shrink-0 flex flex-col items-center justify-center border-r border-slate-800/50 text-[10px] font-medium text-slate-500 ${isToday ? 'bg-cyan-900/10' : ''}`}
+                                            className={`flex-shrink-0 flex flex-col items-center justify-center border-r border-slate-800/50 text-[10px] font-medium text-slate-500 ${isToday ? 'bg-cyan-900/20' : ''}`}
                                             style={{ width: DAY_WIDTH }}
                                         >
                                             <span className={isToday ? 'text-cyan-400 font-bold text-xs' : 'text-slate-400'}>{date.getDate()}</span>
@@ -317,10 +419,14 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
                         </div>
                         <div className="flex-1 py-2">
                              {validTimelineTasks.map(task => {
-                                 const startDate = task.start;
-                                 const endDate = task.end;
-                                 const startDiff = Math.floor((startDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24));
-                                 let duration = Math.floor((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                                 // POSITIONAL CALCULATION: Normalize task dates to local midnight for subtraction
+                                 const normStart = normalizeToLocalMidnight(task.start);
+                                 const normEnd = normalizeToLocalMidnight(task.end);
+                                 const normMin = normalizeToLocalMidnight(minDate);
+
+                                 // Calculate difference in whole days
+                                 const startDiff = Math.round((normStart.getTime() - normMin.getTime()) / (1000 * 60 * 60 * 24));
+                                 let duration = Math.round((normEnd.getTime() - normStart.getTime()) / (1000 * 60 * 60 * 24)) + 1;
                                  if (duration < 1) duration = 1;
 
                                  const leftPos = startDiff * DAY_WIDTH;
@@ -330,7 +436,8 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
                                      <div key={task.id} className="flex h-[52px] border-b border-slate-800/30 hover:bg-slate-800/30 transition-colors group">
                                          <div 
                                             onClick={() => handleTaskClick(task)}
-                                            className="sticky left-0 w-72 flex-shrink-0 bg-slate-900 border-r border-slate-800 flex items-center px-6 z-20 shadow-[4px_0_10px_rgba(0,0,0,0.1)] cursor-pointer"
+                                            style={{ width: timelineColWidth }}
+                                            className="sticky left-0 flex-shrink-0 bg-slate-900 border-r border-slate-800 flex items-center px-6 z-20 shadow-[4px_0_10px_rgba(0,0,0,0.1)] cursor-pointer overflow-hidden"
                                          >
                                              <div className="truncate text-sm font-medium text-slate-300 group-hover:text-cyan-400 transition-colors" title={task.name}>
                                                  {task.name}
@@ -353,9 +460,9 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
                                                     left: leftPos + 2,
                                                     width: Math.max(width - 4, 4),
                                                 }}
-                                                title={`${task.name} (${task.status})\n${task.startDate} - ${task.endDateRaw?.split('T')[0]}`}
+                                                title={`${task.name} (${task.status})\n${formatTooltipDate(task.startDateRaw)} - ${formatTooltipDate(task.endDateRaw)}`}
                                              >
-                                                 {width > 50 && <span className="text-xs font-semibold text-white/90 drop-shadow-md truncate">{task.assignee.split(' ')[0]}</span>}
+                                                 {width > 40 && <span className="text-xs font-semibold text-white/90 drop-shadow-md truncate">{task.assignee.split(' ')[0]}</span>}
                                              </div>
                                          </div>
                                      </div>
@@ -367,13 +474,12 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
             </div>
             <div className="px-4 py-2 bg-slate-900 border-t border-slate-800 text-[10px] text-slate-500 flex justify-between items-center shrink-0">
                 <span>Timeline View</span>
-                <span>* Sorted chronologically. Tasks without valid dates are hidden.</span>
+                <span>* Drag the edge of "Task Name" to stretch/shrink. All dates aligned to local time.</span>
             </div>
         </div>
     );
   };
 
-  // --- LIST VIEW ---
   const renderListView = () => {
       return (
         <div className="h-full overflow-hidden flex flex-col bg-slate-900 rounded-xl border border-slate-800 shadow-sm">
@@ -432,16 +538,6 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
                         ))}
                     </tbody>
                 </table>
-                {filteredTasks.length === 0 && (
-                     <div className="flex flex-col items-center justify-center py-24 text-slate-500">
-                        <div className="bg-slate-800/50 p-4 rounded-full mb-4">
-                            <svg className="w-10 h-10 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                            </svg>
-                        </div>
-                        <p className="text-lg font-medium text-slate-400">No tasks found</p>
-                     </div>
-                )}
             </div>
         </div>
       )
@@ -461,19 +557,24 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
         role="dialog"
     >
         <div 
-            className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col w-full lg:w-[85%] h-full max-h-[95vh] overflow-hidden"
+            className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col w-full lg:w-[90%] h-full max-h-[95vh] overflow-hidden"
             onClick={(e) => e.stopPropagation()}
         >
-            {/* Redesigned Header: More compact and stable layout */}
             <header className="shrink-0 bg-slate-900 border-b border-slate-800">
                 <div className="px-6 py-4 flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between">
-                    {/* Branding & Title */}
                     <div className="flex items-center gap-4">
                         <div className="bg-cyan-500/10 p-2 rounded-lg border border-cyan-500/20">
-                            <svg className="h-5 w-5 text-cyan-400" viewBox="0 0 20 20" fill="currentColor">
-                                <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
-                                <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
-                            </svg>
+                            {isUpdating ? (
+                                <svg className="animate-spin h-5 w-5 text-cyan-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                            ) : (
+                                <svg className="h-5 w-5 text-cyan-400" viewBox="0 0 20 20" fill="currentColor">
+                                    <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
+                                    <path fillRule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3z" clipRule="evenodd" />
+                                </svg>
+                            )}
                         </div>
                         <div>
                             <h2 className="text-lg font-bold text-white tracking-tight">{projectName}</h2>
@@ -482,12 +583,16 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
                     </div>
 
                     <div className="flex items-center gap-3 w-full lg:w-auto">
-                        {/* View Switcher */}
                         <div className="bg-slate-800 p-1 rounded-lg border border-slate-700/50 flex items-center shrink-0">
                             {(['List', 'Kanban', 'Timeline'] as const).map(mode => (
                                 <button 
                                     key={mode}
-                                    onClick={() => setViewMode(mode)}
+                                    onClick={() => {
+                                        setViewMode(mode);
+                                        if (mode === 'Timeline') {
+                                            setFilterStatus(['In Progress', 'To Do']);
+                                        }
+                                    }}
                                     className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-2 ${
                                         viewMode === mode 
                                         ? 'bg-slate-600 text-white shadow-sm ring-1 ring-white/10' 
@@ -510,7 +615,6 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
                     </div>
                 </div>
 
-                {/* Filter Bar: Always visible and wrapping nicely */}
                 <div className="px-6 pb-4 flex flex-wrap items-center gap-3">
                     <div className="relative flex-1 min-w-[200px] max-w-sm">
                         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -546,13 +650,11 @@ const TaskOverviewModal: React.FC<TaskOverviewModalProps> = ({
                 </div>
             </header>
 
-            {/* Content Area */}
             <main className="flex-1 p-4 sm:p-6 min-h-0 bg-slate-950/20">
                 {viewMode === 'List' ? renderListView() : viewMode === 'Kanban' ? renderKanbanView() : renderTimelineView()}
             </main>
         </div>
 
-        {/* Task Detail Modal Overlay */}
         {selectedTask && (
             <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-[2px]">
                  <TaskDetailModal 
